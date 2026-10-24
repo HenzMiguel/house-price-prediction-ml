@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "house-price-mlops"
+version = "0.1.0"
+description = "Reproducible MLOps pipeline for California house-price regression"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+  "alembic>=1.14,<2",
+  "fastapi>=0.115,<1",
+  "joblib>=1.4,<2",
+  "jsonschema>=4.23,<5",
+  "matplotlib>=3.9,<4",
+  "mlflow>=3,<4",
+  "numpy>=2,<3",
+  "optuna>=4,<6",
+  "pandas>=2.2,<4",
+  "psycopg[binary]>=3.2,<4",
+  "pyarrow>=18,<24",
+  "pydantic>=2.9,<3",
+  "pydantic-settings>=2.6,<3",
+  "python-json-logger>=3,<5",
+  "pyyaml>=6,<7",
+  "scikit-learn>=1.5,<2",
+  "scipy>=1.14,<2",
+  "sqlalchemy>=2,<3",
+  "uvicorn[standard]>=0.32,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27,<1",
+  "httpx2>=2,<3",
+  "pytest>=8,<10",
+  "pytest-cov>=6,<8",
+  "ruff>=0.8,<1",
+]
+
+[project.scripts]
+train = "house_price.training.cli:main"
+house-price-api = "house_price.api.app:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/house_price"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+markers = [
+  "docker: requires Docker Compose",
+  "performance: performance/SLO validation",
+  "postgres: requires PostgreSQL",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+

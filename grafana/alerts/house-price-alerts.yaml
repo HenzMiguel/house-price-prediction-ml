@@ -1,0 +1,60 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: house-price-mlops
+    folder: House Price MLOps
+    interval: 1m
+    rules:
+      - uid: house-price-weekly-stale
+        title: No successful weekly training for eight days
+        condition: C
+        for: 5m
+        noDataState: Alerting
+        execErrState: Error
+        data:
+          - refId: A
+            datasourceUid: house-price-postgres
+            relativeTimeRange: {from: 691200, to: 0}
+            model:
+              format: table
+              rawSql: "SELECT EXTRACT(epoch FROM now() - max(completed_at)) AS age_seconds FROM observability.grafana_training_status WHERE status IN ('succeeded','succeeded_no_promotion')"
+          - refId: C
+            datasourceUid: __expr__
+            model: {type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [691200]}}]}
+        annotations: {summary: "Weekly training evidence is stale"}
+      - uid: house-price-inference-heartbeat
+        title: Inference unavailable or heartbeat missing
+        condition: C
+        for: 5m
+        noDataState: Alerting
+        execErrState: Alerting
+        data:
+          - refId: A
+            datasourceUid: house-price-postgres
+            relativeTimeRange: {from: 600, to: 0}
+            model:
+              format: table
+              rawSql: "SELECT min(heartbeat_age_seconds) AS heartbeat_age_seconds FROM observability.grafana_inference_operations WHERE window_started_at > now() - interval '10 minutes' AND health_status = 'ready'"
+          - refId: C
+            datasourceUid: __expr__
+            model: {type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [300]}}]}
+        annotations: {summary: "Inference has no fresh ready heartbeat"}
+      - uid: house-price-quality-gate
+        title: Model quality gate violated
+        condition: C
+        for: 1m
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            datasourceUid: house-price-postgres
+            relativeTimeRange: {from: 86400, to: 0}
+            model:
+              format: table
+              rawSql: "SELECT count(*)::double precision AS violations FROM observability.grafana_candidate_comparison WHERE eligible = false"
+          - refId: C
+            datasourceUid: __expr__
+            model: {type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [0]}}]}
+        annotations: {summary: "One or more candidates violated R², MAE, or RMSE gates"}
+

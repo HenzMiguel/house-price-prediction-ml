@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://house-price.local/schemas/weekly-evidence.schema.json",
+  "title": "Weekly Pipeline Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "workflow_run_id",
+    "training_run_id",
+    "previous_model_version",
+    "candidate_model_version",
+    "effective_model_version",
+    "deployment_health",
+    "rollback_result",
+    "artifact_checksums",
+    "completed_at"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0.0"},
+    "workflow_run_id": {"type": "string", "minLength": 1},
+    "training_run_id": {"type": ["string", "null"], "format": "uuid"},
+    "previous_model_version": {"type": ["string", "null"]},
+    "candidate_model_version": {"type": ["string", "null"]},
+    "effective_model_version": {"type": ["string", "null"]},
+    "deployment_health": {"enum": ["passed", "failed", "not_run"]},
+    "rollback_result": {"enum": ["passed", "failed", "not_required", "not_run"]},
+    "artifact_checksums": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      }
+    },
+    "completed_at": {"type": "string", "format": "date-time"}
+  }
+}

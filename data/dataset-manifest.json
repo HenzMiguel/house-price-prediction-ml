@@ -1,0 +1,20 @@
+{
+  "created_at": "2026-10-24T18:46:33.278996+00:00",
+  "dataset_name": "california_housing",
+  "dataset_version": "sklearn-california-housing-v1",
+  "feature_names": [
+    "MedInc",
+    "HouseAge",
+    "AveRooms",
+    "AveBedrms",
+    "Population",
+    "AveOccup",
+    "Latitude",
+    "Longitude"
+  ],
+  "row_count": 20640,
+  "schema_version": "1.0.0",
+  "sha256": "8cd1f24964ff8b0decda0a7a2d2c4902e5cdaeb6a880a608e739390754891fe5",
+  "source_uri": "https://www.dcc.fc.up.pt/~ltorgo/Regression/cal_housing.html",
+  "target_name": "MedHouseVal"
+}

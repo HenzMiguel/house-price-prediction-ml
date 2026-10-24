@@ -1,0 +1,137 @@
+name: house-price-mlops
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-house_price}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      MIGRATION_PASSWORD: ${MIGRATION_PASSWORD:?set MIGRATION_PASSWORD in .env}
+      PIPELINE_PASSWORD: ${PIPELINE_PASSWORD:?set PIPELINE_PASSWORD in .env}
+      GRAFANA_PASSWORD: ${GRAFANA_PASSWORD:?set GRAFANA_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+    deploy:
+      resources:
+        limits: {cpus: "0.75", memory: 1536M}
+    networks: [backend, host-access]
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: docker/mlflow.Dockerfile
+    restart: unless-stopped
+    environment:
+      MLFLOW_BACKEND_STORE_URI: ${MLFLOW_BACKEND_STORE_URI:?set MLFLOW_BACKEND_STORE_URI}
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    command:
+      - --backend-store-uri
+      - ${MLFLOW_BACKEND_STORE_URI:?set MLFLOW_BACKEND_STORE_URI}
+      - --artifacts-destination
+      - ${MLFLOW_ARTIFACT_ROOT:-/mlflow-artifacts}
+      - --serve-artifacts
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --workers
+      - "1"
+      - --allowed-hosts
+      - mlflow,mlflow:5000,localhost,localhost:5000,127.0.0.1,127.0.0.1:5000
+    volumes:
+      - mlflow-artifacts:/mlflow-artifacts
+    ports:
+      - "127.0.0.1:${MLFLOW_HOST_PORT:-5000}:5000"
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    deploy:
+      resources:
+        limits: {cpus: "0.75", memory: 2560M}
+    networks: [backend, host-access]
+
+  trainer:
+    build:
+      context: .
+      dockerfile: docker/trainer.Dockerfile
+      args: {IMAGE_REVISION: "${CODE_REVISION:-local-dev}"}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      OPTUNA_STORAGE_URL: ${OPTUNA_STORAGE_URL:?set OPTUNA_STORAGE_URL}
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+      MODEL_REGISTRY_PATH: /model-registry
+      DATASET_PATH: /app/data/california_housing.parquet
+      DATASET_MANIFEST_PATH: /app/data/dataset-manifest.json
+      CODE_REVISION: ${CODE_REVISION:-local-dev}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - model-registry:/model-registry
+    depends_on:
+      postgres: {condition: service_healthy}
+      mlflow: {condition: service_healthy}
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    deploy:
+      resources:
+        limits: {cpus: "2.0", memory: 3G}
+    networks: [backend]
+
+  inference:
+    build:
+      context: .
+      dockerfile: docker/inference.Dockerfile
+      args: {IMAGE_REVISION: "${CODE_REVISION:-local-dev}"}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      MODEL_REGISTRY_PATH: /model-registry
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+      ENVIRONMENT_VERSION: ${ENVIRONMENT_VERSION:-local-dev}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "127.0.0.1:${INFERENCE_HOST_PORT:-8000}:8000"
+    volumes:
+      - model-registry:/model-registry:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      mlflow: {condition: service_healthy}
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 1G}
+    networks: [backend, host-access]
+
+networks:
+  backend:
+    internal: true
+  host-access:
+
+volumes:
+  postgres-data:
+  mlflow-artifacts:
+  model-registry:
+

@@ -1,137 +1,113 @@
-# 🏠 House Price Prediction using AI/ML
+# House Price Prediction MLOps
 
-## 📌 Project Overview
+Pipeline MLOps reproduzível para o dataset California Housing. O projeto compara regressão linear,
+Ridge, Lasso, árvore de decisão e floresta aleatória, otimiza hiperparâmetros com Optuna, registra
+experimentos no MLflow e promove o melhor modelo para um volume Docker imutável.
 
-This project presents a complete end-to-end Machine Learning pipeline to predict house prices based on various property features. The objective is to build a regression model that accurately estimates property values using historical housing data.
+O serviço FastAPI utiliza o campeão do volume, enquanto PostgreSQL fornece uma projeção estável para
+um Grafana externo. GitHub Actions executa CI e treinamento semanal. A implantação Azure for
+Students está documentada como próximo incremento e não gera custos nesta feature.
 
-The project demonstrates data preprocessing, exploratory data analysis (EDA), model training, evaluation, and prediction — following industry-level ML workflow standards.
+## Arquitetura
 
----
+- `trainer`: valida o snapshot offline, otimiza, avalia, registra e promove;
+- `mlflow`: tracking server, registry e artefatos;
+- `postgres`: persistência MLflow, Optuna e schema `observability`;
+- `inference`: API HTTP não-root com reload atômico do campeão;
+- Grafana: único serviço externo ao Compose, conectado ao PostgreSQL com usuário read-only.
 
-## 📂 Repository Structure
+Os volumes nomeados são `postgres-data`, `mlflow-artifacts` e `model-registry`. Não execute
+`docker compose down -v` durante a operação normal.
 
-```
-├── AIML House price predictor.ipynb   # Jupyter Notebook with complete ML pipeline & outputs
-├── AIML_House_price_predictor.py      # Clean Python script (code only)
-└── README.md                          # Project documentation
-```
+A interface do MLflow fica disponível apenas no host local em <http://127.0.0.1:5000>.
 
-⚠️ Note: The dataset is imported directly from the `scikit-learn` library. 
-No external dataset file is included in this repository.
+## Requisitos
 
----
+- Docker Engine e Compose v2;
+- para desenvolvimento: Python 3.12–3.14 e `uv`;
+- referência de SLO: Linux, 4 CPUs, 8 GiB RAM e 10 GiB livres.
 
-## 🎯 Problem Statement
-
-Accurate property valuation is critical in the real estate industry. Traditional pricing methods are often subjective and inconsistent.
-
-This project aims to develop a Machine Learning-based predictive system that estimates house prices using structured housing data and regression algorithms.
-
----
-
-## 🧠 Machine Learning Workflow
-
-1. Data Loading  
-2. Data Cleaning & Handling Missing Values  
-3. Exploratory Data Analysis (EDA)  
-4. Feature Selection & Engineering  
-5. Data Splitting (Train-Test Split)  
-6. Model Training  
-7. Model Evaluation  
-8. Price Prediction  
-
----
-
-## 📊 Technologies & Libraries Used
-
-* **Python**
-* **NumPy**
-* **Pandas**
-* **Matplotlib**
-* **Seaborn**
-* **Scikit-learn**
-* **Jupyter Notebook**
-
----
-
-## 📈 Models Implemented
-
-* Linear Regression  
-* Decision Tree Regressor  
-* Random Forest Regressor  
-
----
-
-## 📏 Evaluation Metrics
-
-* Mean Absolute Error (MAE)  
-* Mean Squared Error (MSE)  
-* Root Mean Squared Error (RMSE)  
-* R² Score  
-
----
-
-## 🚀 How to Run the Project
-
-### 1️⃣ Clone the Repository
+## Execução local
 
 ```bash
-git clone https://github.com/your-username/end-to-end-house-price-prediction-ml.git
-cd house-price-prediction-ml
+cp .env.example .env
+# Substitua todos os valores changeme em .env.
+set -a
+source .env
+set +a
+docker compose config --quiet
+docker compose build trainer inference mlflow
+docker compose up -d --wait postgres mlflow
+curl --fail http://127.0.0.1:5000/health
+docker compose run --rm --entrypoint alembic \
+  -e MIGRATION_DATABASE_URL="$MIGRATION_DATABASE_URL" \
+  trainer upgrade head
+docker compose up -d inference
+docker compose run --rm trainer
 ```
 
-### 2️⃣ Install Dependencies
+Depois do primeiro campeão:
 
 ```bash
-pip install numpy pandas matplotlib seaborn scikit-learn
+curl --fail http://localhost:8000/health/ready
+curl --fail http://localhost:8000/v1/model
+curl --fail --request POST http://localhost:8000/v1/predictions \
+  --header 'Content-Type: application/json' \
+  --data '{"instances":[{"MedInc":8.3252,"HouseAge":41,"AveRooms":6.9841,"AveBedrms":1.0238,"Population":322,"AveOccup":2.5556,"Latitude":37.88,"Longitude":-122.23}]}'
 ```
 
-### 3️⃣ Run the Notebook
+## Desenvolvimento e testes
 
 ```bash
-jupyter notebook
+uv sync --frozen --extra dev
+uv run ruff check src scripts migrations tests
+uv run pytest tests/unit tests/contract
+uv run pytest tests/integration
+./scripts/validate_quickstart.sh
 ```
 
-Open the notebook and execute all cells step-by-step.
+O snapshot `data/california_housing.parquet` é versionado por manifesto e checksum. Para regenerá-lo
+deliberadamente durante manutenção:
 
----
+```bash
+uv run python scripts/build_dataset_snapshot.py --output-dir data
+```
 
-## 📌 Key Highlights
+Treinamentos normais não fazem download nem acessam a internet.
 
-✔ Complete ML pipeline implementation  
-✔ Data visualization and EDA  
-✔ Multiple regression model comparison  
-✔ Clean and modular notebook structure  
-✔ Beginner-to-intermediate level AI/ML project  
+## MLflow e promoção
 
----
+Cada execução cria uma run pai, cinco runs de família e trials aninhados. Os cinco finalistas usam o
+mesmo holdout e registram MAE, MSE, RMSE e R². O vencedor precisa de R² ≥ 0,50 e, havendo campeão,
+não pode aumentar MAE ou RMSE em mais de 5%. O desempate é RMSE, MAE, R² e ordem das famílias.
 
-## 🔮 Future Improvements
+O pacote é validado em staging, movido para `models/<model_version>`, associado ao alias MLflow
+`champion` e publicado por troca atômica de `current.json`. Falhas compensam o alias. Um resultado
+idêntico ao campeão não é promovido novamente.
 
-* Hyperparameter tuning using GridSearchCV  
-* Cross-validation  
-* Feature importance analysis  
-* Model serialization using Pickle  
-* Deployment using Streamlit or Flask  
+## Grafana externo
 
----
+Use `grafana/datasource.example.yaml` com `grafana_reader` e importe
+`grafana/dashboards/house-price-ml.json`. Os painéis exibem MAE/MSE/RMSE/R², candidatos, convergência
+Optuna, estados, saúde, volume, erros e p50/p95/p99.
 
-## 📎 Conclusion
+As regras em `grafana/alerts/house-price-alerts.yaml` cobrem execução semanal atrasada, ausência de
+heartbeat da inferência e violações de qualidade. O padrão local publica PostgreSQL somente em
+`127.0.0.1`; acesso remoto exige túnel ou TLS e firewall.
 
-This project demonstrates practical implementation of regression algorithms for real-world problem solving. It highlights the importance of data preprocessing, feature engineering, and model evaluation in building reliable Machine Learning systems.
+## Automação semanal
 
----
+`.github/workflows/weekly-training.yml` usa agenda semanal e execução manual. Em runner hospedado,
+restaura o último `weekly-state`, valida o snapshot, treina, cria backup e publica evidência por 90
+dias. Configure os secrets:
 
-## 👩‍💻 Author
+- `MLOPS_POSTGRES_PASSWORD`;
+- `MLOPS_MIGRATION_PASSWORD`;
+- `MLOPS_PIPELINE_PASSWORD`;
+- `MLOPS_GRAFANA_PASSWORD`.
 
-**Tejal Pagar**  
-AI/ML Enthusiast | Data Science Learner  
-📍 India
+## Operação e Azure
 
----
-
-⭐ If you find this repository helpful, feel free to star it!
-
-
-
-
+- [Operação, backup, restore e rollback](docs/operations.md)
+- [Premissas para Azure for Students](docs/azure-deployment-assumptions.md)
+- [Especificação e contratos](specs/001-train-container-metrics/)

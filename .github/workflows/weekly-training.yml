@@ -1,0 +1,145 @@
+name: Weekly model training
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: weekly-house-price-training
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  POSTGRES_DB: house_price
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: ${{ secrets.MLOPS_POSTGRES_PASSWORD }}
+  MIGRATION_PASSWORD: ${{ secrets.MLOPS_MIGRATION_PASSWORD }}
+  PIPELINE_PASSWORD: ${{ secrets.MLOPS_PIPELINE_PASSWORD }}
+  GRAFANA_PASSWORD: ${{ secrets.MLOPS_GRAFANA_PASSWORD }}
+  MLFLOW_BACKEND_STORE_URI: postgresql+psycopg://postgres:${{ secrets.MLOPS_POSTGRES_PASSWORD }}@postgres:5432/mlflow
+  DATABASE_URL: postgresql+psycopg://pipeline_writer:${{ secrets.MLOPS_PIPELINE_PASSWORD }}@postgres:5432/house_price
+  MIGRATION_DATABASE_URL: postgresql+psycopg://migration_user:${{ secrets.MLOPS_MIGRATION_PASSWORD }}@postgres:5432/house_price
+  OPTUNA_STORAGE_URL: postgresql+psycopg://pipeline_writer:${{ secrets.MLOPS_PIPELINE_PASSWORD }}@postgres:5432/optuna
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+  CODE_REVISION: ${{ github.sha }}
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: {version: "0.9.5", enable-cache: true}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: uv sync --frozen --extra dev
+      - name: Derive idempotent training run UUID
+        run: echo "RUN_UUID=$(python -c \"import uuid; print(uuid.uuid5(uuid.NAMESPACE_URL, 'github:${{ github.repository }}:${{ github.run_id }}'))\")" >> "$GITHUB_ENV"
+
+      - name: Validate required secrets
+        run: |
+          test -n "$POSTGRES_PASSWORD"
+          test -n "$MIGRATION_PASSWORD"
+          test -n "$PIPELINE_PASSWORD"
+          test -n "$GRAFANA_PASSWORD"
+
+      - name: Download most recent successful state
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p restored weekly-output
+          previous_run="$(gh run list --workflow weekly-training.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          if test -n "$previous_run"; then
+            gh run download "$previous_run" --name weekly-state --dir restored || true
+          fi
+
+      - name: Build immutable images and create volumes
+        run: |
+          docker compose build trainer inference mlflow
+          docker compose up --no-start postgres mlflow
+
+      - name: Restore previous champion volume
+        run: |
+          if test -f restored/model-registry.tar.gz; then
+            docker run --rm -v house-price-mlops_model-registry:/target -v "$PWD/restored:/backup:ro" alpine:3.22 sh -c 'tar xzf /backup/model-registry.tar.gz -C /target'
+          fi
+          if test -f restored/mlflow-artifacts.tar.gz; then
+            docker run --rm -v house-price-mlops_mlflow-artifacts:/target -v "$PWD/restored:/backup:ro" alpine:3.22 sh -c 'tar xzf /backup/mlflow-artifacts.tar.gz -C /target'
+          fi
+
+      - name: Start persistence
+        run: docker compose up -d postgres
+
+      - name: Restore PostgreSQL and migrate
+        run: |
+          for database in house_price mlflow optuna; do
+            dump="restored/${database}.dump"
+            if test -f "$dump"; then
+              docker compose exec -T postgres pg_restore --clean --if-exists --no-owner --username "$POSTGRES_USER" --dbname "$database" < "$dump"
+            fi
+          done
+          docker compose run --rm --no-deps --entrypoint alembic -e MIGRATION_DATABASE_URL="$MIGRATION_DATABASE_URL" trainer upgrade head
+
+      - name: Start tracking after restore
+        run: docker compose up -d mlflow
+
+      - name: Record previous champion
+        run: |
+          docker run --rm -v house-price-mlops_model-registry:/registry alpine:3.22 sh -c 'test ! -f /registry/current.json || cp /registry/current.json /tmp/current.json; test ! -f /tmp/current.json || cat /tmp/current.json' > weekly-output/previous-pointer.json
+
+      - name: Train offline
+        id: training
+        continue-on-error: true
+        run: |
+          docker compose run --rm trainer \
+            --run-id "$RUN_UUID" \
+            2>&1 | tee weekly-output/training.jsonl
+
+      - name: Backup durable state
+        if: always()
+        run: |
+          for database in house_price mlflow optuna; do
+            docker compose exec -T postgres pg_dump --format=custom --username "$POSTGRES_USER" "$database" > "weekly-output/${database}.dump" || true
+          done
+          docker run --rm -v house-price-mlops_model-registry:/source:ro -v "$PWD/weekly-output:/backup" alpine:3.22 sh -c 'tar czf /backup/model-registry.tar.gz -C /source .' || true
+          docker run --rm -v house-price-mlops_mlflow-artifacts:/source:ro -v "$PWD/weekly-output:/backup" alpine:3.22 sh -c 'tar czf /backup/mlflow-artifacts.tar.gz -C /source .' || true
+
+      - name: Build weekly evidence
+        if: always()
+        run: |
+          effective="$(docker run --rm -v house-price-mlops_model-registry:/registry:ro alpine:3.22 sh -c "sed -n 's/.*\"model_version\": *\"\([^\"]*\)\".*/\1/p' /registry/current.json 2>/dev/null" || true)"
+          previous="$(sed -n 's/.*"model_version": *"\([^"]*\)".*/\1/p' weekly-output/previous-pointer.json || true)"
+          uv run python scripts/create_weekly_evidence.py \
+            --workflow-run-id "${{ github.run_id }}" \
+            --training-run-id "$RUN_UUID" \
+            --previous-model-version "${previous:-null}" \
+            --candidate-model-version "${effective:-null}" \
+            --effective-model-version "${effective:-null}" \
+            --deployment-health not_run \
+            --rollback-result not_run \
+            --artifact weekly-output/training.jsonl \
+            --artifact weekly-output/house_price.dump \
+            --artifact weekly-output/mlflow.dump \
+            --artifact weekly-output/optuna.dump \
+            --artifact weekly-output/model-registry.tar.gz \
+            --artifact weekly-output/mlflow-artifacts.tar.gz
+
+      - name: Upload immutable weekly state and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-state
+          path: weekly-output/
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Fail when training failed
+        if: steps.training.outcome != 'success'
+        run: exit 1
+

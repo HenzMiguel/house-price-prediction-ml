@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://house-price.local/schemas/model-package-manifest-v2.schema.json",
+  "title": "Persisted Model Package Manifest v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "model_version", "registered_model_name", "training_run_id",
+    "source_mlflow_run_id", "source_mlflow_model_version", "candidate_family",
+    "code_revision", "training_environment_version", "dataset", "parameters", "metrics",
+    "signature", "artifacts", "promoted_at", "previous_model_version"
+  ],
+  "properties": {
+    "schema_version": {"const": "2.0.0"},
+    "model_version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "registered_model_name": {"const": "house-price-regressor"},
+    "training_run_id": {"type": "string", "format": "uuid"},
+    "source_mlflow_run_id": {"type": "string", "minLength": 1},
+    "source_mlflow_model_version": {"type": ["string", "null"], "minLength": 1},
+    "candidate_family": {
+      "enum": ["linear", "ridge", "lasso", "decision_tree", "random_forest"]
+    },
+    "code_revision": {"type": "string", "minLength": 1},
+    "training_environment_version": {"type": "string", "minLength": 1},
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "sha256", "row_count", "schema_version"],
+      "properties": {
+        "name": {"const": "california_housing"},
+        "version": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "row_count": {"const": 20640},
+        "schema_version": {"type": "string", "minLength": 1}
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": {"type": ["string", "number", "integer", "boolean", "null"]}
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mae", "mse", "rmse", "r2"],
+      "properties": {
+        "mae": {"type": "number", "minimum": 0},
+        "mse": {"type": "number", "minimum": 0},
+        "rmse": {"type": "number", "minimum": 0},
+        "r2": {"type": "number"}
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputs", "output"],
+      "properties": {
+        "inputs": {
+          "type": "array",
+          "prefixItems": [
+            {"$ref": "#/$defs/medInc"}, {"$ref": "#/$defs/houseAge"},
+            {"$ref": "#/$defs/aveRooms"}, {"$ref": "#/$defs/aveBedrms"},
+            {"$ref": "#/$defs/population"}, {"$ref": "#/$defs/aveOccup"},
+            {"$ref": "#/$defs/latitude"}, {"$ref": "#/$defs/longitude"}
+          ],
+          "items": false,
+          "minItems": 8,
+          "maxItems": 8
+        },
+        "output": {"const": "double"}
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_format", "model_path", "parameters_path", "metrics_path",
+        "dependency_lock_path", "plots", "checksums"
+      ],
+      "properties": {
+        "model_format": {"const": "mlflow"},
+        "model_path": {"const": "model"},
+        "parameters_path": {"const": "parameters.json"},
+        "metrics_path": {"const": "metrics.json"},
+        "dependency_lock_path": {"const": "requirements.lock"},
+        "plots": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^plots/[A-Za-z0-9._-]+$"},
+          "uniqueItems": true
+        },
+        "checksums": {
+          "type": "object",
+          "minProperties": 4,
+          "propertyNames": {"pattern": "^(model|plots|parameters\\.json|metrics\\.json|requirements\\.lock)(/[A-Za-z0-9._-]+)*$"},
+          "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        }
+      }
+    },
+    "promoted_at": {"type": "string", "format": "date-time"},
+    "previous_model_version": {"type": ["string", "null"]}
+  },
+  "$defs": {
+    "medInc": {"$ref": "#/$defs/doubleField", "properties": {"name": {"const": "MedInc"}, "type": {"const": "double"}}},
+    "houseAge": {"$ref": "#/$defs/doubleField", "properties": {"name": {"const": "HouseAge"}, "type": {"const": "double"}}},
+    "aveRooms": {"$ref": "#/$defs/doubleField", "properties": {"name": {"const": "AveRooms"}, "type": {"const": "double"}}},
+    "aveBedrms": {"$ref": "#/$defs/doubleField", "properties": {"name": {"const": "AveBedrms"}, "type": {"const": "double"}}},
+    "population": {"$ref": "#/$defs/doubleField", "properties": {"name": {"const": "Population"}, "type": {"const": "double"}}},
+    "aveOccup": {"$ref": "#/$defs/doubleField", "properties": {"name": {"const": "AveOccup"}, "type": {"const": "double"}}},
+    "latitude": {"$ref": "#/$defs/doubleField", "properties": {"name": {"const": "Latitude"}, "type": {"const": "double"}}},
+    "longitude": {"$ref": "#/$defs/doubleField", "properties": {"name": {"const": "Longitude"}, "type": {"const": "double"}}},
+    "doubleField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"]
+    }
+  }
+}
+

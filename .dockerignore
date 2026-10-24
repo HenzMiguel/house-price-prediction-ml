@@ -1,0 +1,21 @@
+.git/
+.agents/
+.specify/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.log*
+.env
+.env.*
+!.env.example
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage/
+htmlcov/
+model-registry/
+mlruns/
+weekly-output/
+AIML House price predictor.ipynb
+

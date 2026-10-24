@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://house-price.local/schemas/reconciliation-report.schema.json",
+  "title": "Model Catalog Reconciliation Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "reconciliation_id", "trigger", "mode", "scan_fingerprint",
+    "started_at", "completed_at", "status", "retryable", "counts", "items"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "reconciliation_id": {"type": "string", "format": "uuid"},
+    "trigger": {"enum": ["manual", "startup", "weekly", "restore"]},
+    "mode": {"enum": ["check", "apply"]},
+    "scan_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "completed_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["succeeded", "partial", "failed", "lock_unavailable"]},
+    "retryable": {"type": "boolean"},
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scanned", "registered", "recovered", "quarantined", "unchanged"],
+      "properties": {
+        "scanned": {"type": "integer", "minimum": 0},
+        "registered": {"type": "integer", "minimum": 0},
+        "recovered": {"type": "integer", "minimum": 0},
+        "quarantined": {"type": "integer", "minimum": 0},
+        "unchanged": {"type": "integer", "minimum": 0}
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["package_relpath", "model_version", "manifest_sha256", "action", "result", "reason_code", "mlflow_run_id", "mlflow_model_version"],
+        "properties": {
+          "package_relpath": {"type": "string", "pattern": "^models/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+          "model_version": {"type": ["string", "null"]},
+          "manifest_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+          "action": {"enum": ["verified", "registered", "recovered", "quarantined", "unchanged", "conflict"]},
+          "result": {"enum": ["succeeded", "failed", "skipped"]},
+          "reason_code": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+          "mlflow_run_id": {"type": ["string", "null"]},
+          "mlflow_model_version": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}
+

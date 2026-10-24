@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://house-price.local/schemas/deletion-impact.schema.json",
+  "title": "Model Deletion Impact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "deletion_id", "model_version", "allowed", "reason_codes",
+    "is_pointer_target", "has_champion_alias", "is_last_integral_model", "mutation_active",
+    "package_relpath", "mlflow_run_id", "mlflow_model_version", "shared_artifact_references",
+    "confirmation_token", "created_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "deletion_id": {"type": "string", "format": "uuid"},
+    "model_version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "allowed": {"type": "boolean"},
+    "reason_codes": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+      "uniqueItems": true
+    },
+    "is_pointer_target": {"type": "boolean"},
+    "has_champion_alias": {"type": "boolean"},
+    "is_last_integral_model": {"type": "boolean"},
+    "mutation_active": {"type": "boolean"},
+    "package_relpath": {"type": "string", "pattern": "^models/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "mlflow_run_id": {"type": ["string", "null"]},
+    "mlflow_model_version": {"type": ["string", "null"]},
+    "shared_artifact_references": {"type": "integer", "minimum": 0},
+    "confirmation_token": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"allowed": {"const": false}}},
+      "then": {"properties": {"reason_codes": {"minItems": 1}}}
+    },
+    {
+      "if": {"anyOf": [
+        {"properties": {"is_pointer_target": {"const": true}}},
+        {"properties": {"has_champion_alias": {"const": true}}},
+        {"properties": {"is_last_integral_model": {"const": true}}},
+        {"properties": {"mutation_active": {"const": true}}}
+      ]},
+      "then": {"properties": {"allowed": {"const": false}}}
+    }
+  ]
+}
+

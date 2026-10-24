@@ -1,0 +1,70 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "id": null,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Latest training status and duration",
+      "type": "stat",
+      "targets": [{"refId": "A", "format": "table", "rawSql": "SELECT status, duration_seconds, started_at AS time FROM observability.grafana_training_status WHERE $__timeFilter(started_at) ORDER BY started_at DESC LIMIT 1"}]
+    },
+    {
+      "id": 2,
+      "title": "Current champion and dataset",
+      "type": "table",
+      "targets": [{"refId": "A", "format": "table", "rawSql": "SELECT promoted_model_version, dataset_version, completed_at AS time FROM observability.grafana_training_status WHERE promoted_model_version IS NOT NULL ORDER BY completed_at DESC LIMIT 1"}]
+    },
+    {
+      "id": 3,
+      "title": "MAE / MSE / RMSE / R² history",
+      "type": "timeseries",
+      "targets": [{"refId": "A", "format": "time_series", "rawSql": "SELECT measured_at AS time, mae, mse, rmse, r2 FROM observability.grafana_model_metric_history WHERE $__timeFilter(measured_at) AND candidate_family = ANY(string_to_array('${family:csv}', ',')) ORDER BY measured_at"}]
+    },
+    {
+      "id": 4,
+      "title": "Five candidate comparison",
+      "type": "barchart",
+      "targets": [{"refId": "A", "format": "table", "rawSql": "SELECT candidate_family, mae, mse, rmse, r2, eligible, promoted FROM observability.grafana_candidate_comparison WHERE training_run_id::text = '${training_run_id}' ORDER BY candidate_family"}]
+    },
+    {
+      "id": 5,
+      "title": "Optuna convergence",
+      "type": "timeseries",
+      "targets": [{"refId": "A", "format": "time_series", "rawSql": "SELECT completed_at AS time, best_so_far_rmse, candidate_family AS metric FROM observability.grafana_optuna_convergence WHERE $__timeFilter(completed_at) ORDER BY completed_at"}]
+    },
+    {
+      "id": 6,
+      "title": "Promotions, rejections, and failures",
+      "type": "state-timeline",
+      "targets": [{"refId": "A", "format": "table", "rawSql": "SELECT started_at AS time, status, training_run_id::text FROM observability.grafana_training_status WHERE $__timeFilter(started_at) ORDER BY started_at"}]
+    },
+    {
+      "id": 7,
+      "title": "Inference health, volume, errors, p50/p95/p99",
+      "type": "timeseries",
+      "targets": [{"refId": "A", "format": "time_series", "rawSql": "SELECT window_started_at AS time, request_count, error_count, latency_p50_ms, latency_p95_ms, latency_p99_ms, heartbeat_age_seconds FROM observability.grafana_inference_operations WHERE $__timeFilter(window_started_at) ORDER BY window_started_at"}]
+    },
+    {
+      "id": 8,
+      "title": "Metric age / weekly freshness",
+      "type": "gauge",
+      "targets": [{"refId": "A", "format": "table", "rawSql": "SELECT max(metric_age_seconds) AS metric_age_seconds FROM observability.grafana_training_status"}]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "tags": ["mlops", "regression", "house-price"],
+  "templating": {
+    "list": [
+      {"name": "training_run_id", "type": "query", "datasource": {"uid": "house-price-postgres"}, "query": "SELECT training_run_id::text FROM observability.grafana_training_status ORDER BY started_at DESC LIMIT 50"},
+      {"name": "family", "type": "query", "multi": true, "includeAll": true, "datasource": {"uid": "house-price-postgres"}, "query": "SELECT DISTINCT candidate_family FROM observability.grafana_candidate_comparison ORDER BY 1"}
+    ]
+  },
+  "time": {"from": "now-30d", "to": "now"},
+  "timezone": "utc",
+  "title": "House Price MLOps",
+  "uid": "house-price-mlops",
+  "version": 1
+}
+

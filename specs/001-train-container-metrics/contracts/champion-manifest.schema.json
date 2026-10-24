@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://house-price.local/schemas/champion-manifest.schema.json",
+  "title": "Champion Model Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "model_version",
+    "registered_model_name",
+    "mlflow_model_version",
+    "mlflow_run_id",
+    "training_run_id",
+    "candidate_family",
+    "dataset",
+    "model_checksum",
+    "dependency_lock_checksum",
+    "training_environment_version",
+    "metrics",
+    "signature",
+    "artifacts",
+    "promoted_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "model_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "registered_model_name": {
+      "type": "string",
+      "const": "house-price-regressor"
+    },
+    "mlflow_model_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mlflow_run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "training_run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "candidate_family": {
+      "enum": ["linear", "ridge", "lasso", "decision_tree", "random_forest"]
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "sha256", "row_count", "schema_version"],
+      "properties": {
+        "name": {"type": "string", "const": "california_housing"},
+        "version": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "row_count": {"type": "integer", "const": 20640},
+        "schema_version": {"type": "string", "minLength": 1}
+      }
+    },
+    "model_checksum": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "dependency_lock_checksum": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "training_environment_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mae", "mse", "rmse", "r2"],
+      "properties": {
+        "mae": {"type": "number", "minimum": 0},
+        "mse": {"type": "number", "minimum": 0},
+        "rmse": {"type": "number", "minimum": 0},
+        "r2": {"type": "number"}
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputs", "output"],
+      "properties": {
+        "inputs": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "type"],
+            "properties": {
+              "name": {
+                "enum": [
+                  "MedInc",
+                  "HouseAge",
+                  "AveRooms",
+                  "AveBedrms",
+                  "Population",
+                  "AveOccup",
+                  "Latitude",
+                  "Longitude"
+                ]
+              },
+              "type": {"type": "string", "const": "double"}
+            }
+          }
+        },
+        "output": {"type": "string", "const": "double"}
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_path", "metrics_path", "plots"],
+      "properties": {
+        "model_path": {"type": "string", "const": "model"},
+        "metrics_path": {"type": "string", "const": "metrics.json"},
+        "plots": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^plots/[A-Za-z0-9._-]+$"
+          }
+        }
+      }
+    },
+    "promoted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "previous_model_version": {
+      "type": ["string", "null"]
+    }
+  }
+}

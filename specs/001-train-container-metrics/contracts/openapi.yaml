@@ -1,0 +1,287 @@
+openapi: 3.1.0
+info:
+  title: House Price Prediction API
+  version: 1.0.0
+  description: Contrato local de saúde, identidade do campeão e inferência em lote.
+servers:
+  - url: http://localhost:8000
+    description: Ambiente Docker Compose local
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      summary: Verifica se o processo está respondendo
+      responses:
+        "200":
+          description: Processo ativo, mesmo quando ainda não existe campeão carregado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivenessResponse"
+  /health/ready:
+    get:
+      operationId: getReadiness
+      summary: Verifica se um campeão válido está pronto para inferência
+      responses:
+        "200":
+          description: Modelo validado e carregado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: Nenhum campeão válido está carregado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/model:
+    get:
+      operationId: getCurrentModel
+      summary: Retorna linhagem e métricas do campeão carregado
+      responses:
+        "200":
+          description: Metadados do campeão
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelInfo"
+        "503":
+          description: Nenhum campeão válido está carregado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/predictions:
+    post:
+      operationId: createPredictions
+      summary: Estima preços para um lote de imóveis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PredictionRequest"
+      responses:
+        "200":
+          description: Previsões produzidas na mesma ordem das instâncias
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictionResponse"
+        "422":
+          description: Corpo, campos, tipos ou valores inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+        "503":
+          description: Nenhum campeão válido está carregado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Falha inesperada sem exposição de stack trace ou dados da entrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    LivenessResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: alive
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, environment_version, model_version]
+      properties:
+        status:
+          type: string
+          const: ready
+        environment_version:
+          type: string
+          minLength: 1
+          description: Versão imutável da imagem ou revisão do ambiente em execução.
+        model_version:
+          type: string
+          minLength: 1
+    ModelMetrics:
+      type: object
+      additionalProperties: false
+      required: [mae, mse, rmse, r2]
+      properties:
+        mae:
+          type: number
+          minimum: 0
+        mse:
+          type: number
+          minimum: 0
+        rmse:
+          type: number
+          minimum: 0
+        r2:
+          type: number
+    ModelInfo:
+      type: object
+      additionalProperties: false
+      required:
+        - model_version
+        - environment_version
+        - mlflow_run_id
+        - training_run_id
+        - candidate_family
+        - dataset_version
+        - dataset_checksum
+        - trained_at
+        - metrics
+      properties:
+        model_version:
+          type: string
+          minLength: 1
+        environment_version:
+          type: string
+          minLength: 1
+          description: Versão imutável da imagem ou revisão do ambiente em execução.
+        mlflow_run_id:
+          type: string
+          minLength: 1
+        training_run_id:
+          type: string
+          format: uuid
+        candidate_family:
+          $ref: "#/components/schemas/CandidateFamily"
+        dataset_version:
+          type: string
+          minLength: 1
+        dataset_checksum:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        trained_at:
+          type: string
+          format: date-time
+        metrics:
+          $ref: "#/components/schemas/ModelMetrics"
+    CandidateFamily:
+      type: string
+      enum: [linear, ridge, lasso, decision_tree, random_forest]
+    HousingInstance:
+      type: object
+      additionalProperties: false
+      required:
+        - MedInc
+        - HouseAge
+        - AveRooms
+        - AveBedrms
+        - Population
+        - AveOccup
+        - Latitude
+        - Longitude
+      properties:
+        MedInc:
+          type: number
+          minimum: 0
+        HouseAge:
+          type: number
+          minimum: 0
+        AveRooms:
+          type: number
+          exclusiveMinimum: 0
+        AveBedrms:
+          type: number
+          minimum: 0
+        Population:
+          type: number
+          minimum: 0
+        AveOccup:
+          type: number
+          exclusiveMinimum: 0
+        Latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+        Longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+    PredictionRequest:
+      type: object
+      additionalProperties: false
+      required: [instances]
+      properties:
+        instances:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/HousingInstance"
+    PredictionResponse:
+      type: object
+      additionalProperties: false
+      required: [predictions, environment_version, model_version, mlflow_run_id, request_id]
+      properties:
+        predictions:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: number
+        model_version:
+          type: string
+          minLength: 1
+        environment_version:
+          type: string
+          minLength: 1
+          description: Versão imutável da imagem ou revisão do ambiente em execução.
+        mlflow_run_id:
+          type: string
+          minLength: 1
+        request_id:
+          type: string
+          format: uuid
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+          minLength: 1
+        message:
+          type: string
+          minLength: 1
+        request_id:
+          type: string
+          format: uuid
+    ValidationIssue:
+      type: object
+      additionalProperties: false
+      required: [location, message, type]
+      properties:
+        location:
+          type: array
+          items:
+            oneOf:
+              - type: string
+              - type: integer
+        message:
+          type: string
+        type:
+          type: string
+    ValidationErrorResponse:
+      allOf:
+        - $ref: "#/components/schemas/ErrorResponse"
+        - type: object
+          required: [issues]
+          properties:
+            issues:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/ValidationIssue"
