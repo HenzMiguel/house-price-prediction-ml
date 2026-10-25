@@ -15,6 +15,18 @@ class Settings(BaseSettings):
     database_url: str = Field(min_length=1)
     optuna_storage_url: str = Field(min_length=1)
     mlflow_tracking_uri: str = Field(min_length=1)
+    mlflow_experiment_name: str = Field(default="house-price-training-v2", min_length=1)
+    mlflow_recovery_experiment_name: str = Field(
+        default="house-price-model-reconciliation", min_length=1
+    )
+    mlflow_registered_model_name: str = Field(default="house-price-regressor", min_length=1)
+    mlflow_champion_alias: str = Field(default="champion", min_length=1)
+    catalog_advisory_lock_id: int = 0x485052494345
+    postgres_volume_name: str = Field(default="house-price-postgres-data", min_length=1)
+    mlflow_artifacts_volume_name: str = Field(
+        default="house-price-mlflow-artifacts", min_length=1
+    )
+    model_registry_volume_name: str = Field(default="house-price-model-registry", min_length=1)
     model_registry_path: Path = Path("/model-registry")
     dataset_path: Path = Path("/app/data/california_housing.parquet")
     dataset_manifest_path: Path = Path("/app/data/dataset-manifest.json")
@@ -36,9 +48,25 @@ class Settings(BaseSettings):
     @field_validator("mlflow_tracking_uri")
     @classmethod
     def validate_tracking_uri(cls, value: str) -> str:
-        if not value.startswith(("http://", "https://", "file:")):
-            raise ValueError("unsupported MLflow tracking URI")
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("MLflow tracking URI must use HTTP(S)")
         return value.rstrip("/")
+
+    @field_validator(
+        "mlflow_experiment_name",
+        "mlflow_recovery_experiment_name",
+        "mlflow_registered_model_name",
+        "mlflow_champion_alias",
+        "postgres_volume_name",
+        "mlflow_artifacts_volume_name",
+        "model_registry_volume_name",
+    )
+    @classmethod
+    def reject_secret_like_identifiers(cls, value: str) -> str:
+        lowered = value.lower()
+        if any(token in lowered for token in ("password=", "token=", "secret=", "://", "@")):
+            raise ValueError("catalog identifiers must not contain credentials or URLs")
+        return value
 
 
 @lru_cache

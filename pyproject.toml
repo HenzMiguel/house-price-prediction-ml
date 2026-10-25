@@ -14,7 +14,7 @@ dependencies = [
   "joblib>=1.4,<2",
   "jsonschema>=4.23,<5",
   "matplotlib>=3.9,<4",
-  "mlflow>=3,<4",
+  "mlflow==3.17.2",
   "numpy>=2,<3",
   "optuna>=4,<6",
   "pandas>=2.2,<4",
@@ -31,17 +31,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-  "httpx>=0.27,<1",
-  "httpx2>=2,<3",
-  "pytest>=8,<10",
-  "pytest-cov>=6,<8",
-  "ruff>=0.8,<1",
-]
+dev = ["httpx>=0.27,<1", "httpx2>=2,<3", "pytest>=8,<10", "pytest-cov>=6,<8", "ruff>=0.8,<1"]
 
 [project.scripts]
 train = "house_price.training.cli:main"
 house-price-api = "house_price.api.app:run"
+model-catalog = "house_price.catalog.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/house_price"]

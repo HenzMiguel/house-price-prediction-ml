@@ -35,6 +35,11 @@ def test_compose_drops_capabilities_and_never_mounts_docker_socket(project_root:
     assert "mlflow:5000" in mlflow_command[mlflow_command.index("--allowed-hosts") + 1]
     assert "localhost:5000" in mlflow_command[mlflow_command.index("--allowed-hosts") + 1]
     assert "MLFLOW_DEFAULT_ARTIFACT_ROOT" not in compose["services"]["mlflow"]["environment"]
+    assert compose["volumes"]["postgres-data"]["external"] is True
+    assert compose["volumes"]["mlflow-artifacts"]["external"] is True
+    assert compose["volumes"]["model-registry"]["external"] is True
+    assert "mlflow-artifacts" not in str(compose["services"]["trainer"].get("volumes", []))
+    assert "mlflow-artifacts" not in str(compose["services"]["inference"].get("volumes", []))
 
 
 def test_no_secrets_or_dataset_payloads_are_baked_into_images(project_root: Path) -> None:
@@ -45,4 +50,3 @@ def test_no_secrets_or_dataset_payloads_are_baked_into_images(project_root: Path
     assert "AIML House price predictor.ipynb" not in dockerfiles
     trainer = (project_root / "docker/trainer.Dockerfile").read_text()
     assert "chmod -R a-w /app/data" in trainer
-

@@ -37,6 +37,7 @@ jobs:
       MLFLOW_BACKEND_STORE_URI: postgresql+psycopg://postgres:ci-postgres-password@postgres:5432/mlflow
       MIGRATION_DATABASE_URL: postgresql+psycopg://migration_user:ci-migration-password@127.0.0.1:5432/house_price
       GRAFANA_DATABASE_URL: postgresql+psycopg://grafana_reader:ci-grafana-password@127.0.0.1:5432/house_price
+      CATALOG_MIGRATION_TEST_DATABASE_URL: postgresql+psycopg://migration_user:ci-migration-password@127.0.0.1:5432/house_price
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -44,12 +45,16 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: uv sync --frozen --extra dev
+      - run: echo "HOST_UID=$(id -u)" >> "$GITHUB_ENV" && echo "HOST_GID=$(id -g)" >> "$GITHUB_ENV"
+      - run: ./scripts/manage_persistent_storage.sh create
       - run: docker compose up -d postgres
       - run: uv run alembic upgrade head
       - run: uv run python scripts/validate_grafana_queries.py
       - run: uv run pytest tests/integration -m "not docker"
       - if: always()
-        run: docker compose down
+        run: |
+          docker compose down
+          ./scripts/manage_persistent_storage.sh destroy --confirm destroy
 
   performance:
     runs-on: ubuntu-latest
@@ -66,8 +71,58 @@ jobs:
   images:
     runs-on: ubuntu-latest
     needs: quality
+    env:
+      POSTGRES_PASSWORD: image-test-postgres
+      MIGRATION_PASSWORD: image-test-migration
+      PIPELINE_PASSWORD: image-test-pipeline
+      GRAFANA_PASSWORD: image-test-grafana
+      DATABASE_URL: postgresql+psycopg://pipeline_writer:image-test-pipeline@postgres:5432/house_price
+      MIGRATION_DATABASE_URL: postgresql+psycopg://migration_user:image-test-migration@postgres:5432/house_price
+      OPTUNA_STORAGE_URL: postgresql+psycopg://pipeline_writer:image-test-pipeline@postgres:5432/optuna
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg://postgres:image-test-postgres@postgres:5432/mlflow
     steps:
       - uses: actions/checkout@v4
+      - run: echo "HOST_UID=$(id -u)" >> "$GITHUB_ENV" && echo "HOST_GID=$(id -g)" >> "$GITHUB_ENV"
+      - run: ./scripts/manage_persistent_storage.sh create
       - run: docker compose --env-file .env.example config --quiet
-      - run: docker compose --env-file .env.example build trainer inference mlflow
+      - run: docker compose --env-file .env.example build --pull trainer inference mlflow
+      - if: always()
+        run: ./scripts/manage_persistent_storage.sh destroy --confirm destroy
+
+  docker-persistence:
+    runs-on: ubuntu-latest
+    needs: [integration, images]
+    timeout-minutes: 45
+    env:
+      POSTGRES_DB: house_price
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ci-postgres-password
+      MIGRATION_PASSWORD: ci-migration-password
+      PIPELINE_PASSWORD: ci-pipeline-password
+      GRAFANA_PASSWORD: ci-grafana-password
+      DATABASE_URL: postgresql+psycopg://pipeline_writer:ci-pipeline-password@postgres:5432/house_price
+      MIGRATION_DATABASE_URL: postgresql+psycopg://migration_user:ci-migration-password@postgres:5432/house_price
+      OPTUNA_STORAGE_URL: postgresql+psycopg://pipeline_writer:ci-pipeline-password@postgres:5432/optuna
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg://postgres:ci-postgres-password@postgres:5432/mlflow
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      RUN_DOCKER_PERSISTENCE_TEST: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: {version: "0.9.5", enable-cache: true}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: uv sync --frozen --extra dev
+      - run: echo "HOST_UID=$(id -u)" >> "$GITHUB_ENV" && echo "HOST_GID=$(id -g)" >> "$GITHUB_ENV"
+      - run: mkdir -p weekly-output
+      - run: ./scripts/manage_persistent_storage.sh create
+      - run: docker compose build trainer inference mlflow
+      - run: docker compose up -d --wait postgres mlflow
+      - run: docker compose up -d inference
+      - run: uv run pytest tests/integration/test_container_security.py
+      - run: uv run pytest tests/integration/test_volume_persistence.py -m docker
+      - if: always()
+        run: |
+          docker compose down
+          ./scripts/manage_persistent_storage.sh destroy --confirm destroy
 

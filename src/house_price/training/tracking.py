@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import mlflow
@@ -49,10 +50,12 @@ class TrainingTracker:
         mlflow.log_metrics(metrics.__dict__)
         for plot in plots:
             mlflow.log_artifact(str(plot), artifact_path="plots")
-        mlflow.sklearn.log_model(
-            estimator,
-            name="model",
-            input_example=input_example,
-            registered_model_name=None,
-            serialization_format="cloudpickle",
-        )
+        with TemporaryDirectory(prefix="mlflow-model-") as temporary:
+            model_path = Path(temporary) / "model"
+            mlflow.sklearn.save_model(
+                estimator,
+                path=str(model_path),
+                input_example=input_example,
+                serialization_format="cloudpickle",
+            )
+            mlflow.log_artifacts(str(model_path), artifact_path="model")

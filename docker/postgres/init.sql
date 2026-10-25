@@ -15,6 +15,7 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'mlflow') \gexec
 SELECT 'CREATE DATABASE optuna OWNER pipeline_writer'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'optuna') \gexec
 CREATE SCHEMA IF NOT EXISTS observability AUTHORIZATION migration_user;
+CREATE SCHEMA IF NOT EXISTS catalog AUTHORIZATION migration_user;
 
 REVOKE ALL ON SCHEMA observability FROM PUBLIC;
 GRANT USAGE ON SCHEMA observability TO pipeline_writer, grafana_reader;
@@ -23,4 +24,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE migration_user IN SCHEMA observability
   GRANT SELECT, INSERT, UPDATE ON TABLES TO pipeline_writer;
 ALTER DEFAULT PRIVILEGES FOR ROLE migration_user IN SCHEMA observability
   GRANT SELECT ON TABLES TO grafana_reader;
+
+REVOKE ALL ON SCHEMA catalog FROM PUBLIC;
+GRANT USAGE ON SCHEMA catalog TO pipeline_writer;
+GRANT USAGE, CREATE ON SCHEMA catalog TO migration_user;
+ALTER DEFAULT PRIVILEGES FOR ROLE migration_user IN SCHEMA catalog
+  GRANT SELECT, INSERT, UPDATE ON TABLES TO pipeline_writer;
 

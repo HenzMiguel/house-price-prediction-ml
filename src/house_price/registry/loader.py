@@ -1,14 +1,20 @@
 """Safe champion loading and last-known-good cache."""
 
-import json
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 import joblib
+import mlflow.pyfunc
 
-from house_price.registry.manifest import ChampionManifest, sha256_file, validate_package
+from house_price.registry.manifest import (
+    ChampionManifest,
+    model_file_for,
+    sha256_file,
+    validate_package,
+)
+from house_price.registry.pointer import read_pointer
 
 
 class Predictor(Protocol):
@@ -36,28 +42,22 @@ class ChampionLoader:
 
     def load(self) -> LoadedChampion:
         pointer_path = self.root / "current.json"
-        pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
-        required = {
-            "schema_version",
-            "model_version",
-            "manifest_path",
-            "manifest_sha256",
-            "updated_at",
-        }
-        if set(pointer) != required or pointer["schema_version"] != "1.0.0":
-            raise ValueError("invalid champion pointer")
-        manifest_rel = Path(pointer["manifest_path"])
-        if manifest_rel.is_absolute() or ".." in manifest_rel.parts:
-            raise ValueError("unsafe manifest path")
+        pointer = read_pointer(self.root)
+        if pointer is None:
+            raise FileNotFoundError(pointer_path)
+        manifest_rel = Path(pointer.manifest_path)
         manifest_path = self.root / manifest_rel
-        if sha256_file(manifest_path) != pointer["manifest_sha256"]:
+        if sha256_file(manifest_path) != pointer.manifest_sha256:
             raise ValueError("manifest checksum differs from pointer")
         package_dir = manifest_path.parent
-        manifest = validate_package(package_dir)
-        if manifest.model_version != pointer["model_version"]:
+        manifest = validate_package(package_dir, require_directory_identity=True)
+        if manifest.model_version != pointer.model_version:
             raise ValueError("pointer and manifest model versions differ")
-        predictor = joblib.load(package_dir / manifest.artifacts.model_path / "model.joblib")
-        loaded = LoadedChampion(manifest, predictor, pointer["manifest_sha256"])
+        if manifest.schema_version == "2.0.0":
+            predictor = mlflow.pyfunc.load_model(str(package_dir / "model"))
+        else:
+            predictor = joblib.load(model_file_for(manifest, package_dir))
+        loaded = LoadedChampion(manifest, predictor, pointer.manifest_sha256)
         with self._lock:
             self._current = loaded
             self._pointer_mtime_ns = pointer_path.stat().st_mtime_ns
@@ -73,4 +73,3 @@ class ChampionLoader:
                 return False
         self.load()
         return True
-

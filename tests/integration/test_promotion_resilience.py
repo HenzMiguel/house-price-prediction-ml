@@ -69,7 +69,7 @@ def test_pointer_failure_restores_previous_alias(project_root, tmp_path, monkeyp
             raise OSError("simulated pointer failure")
         return real_replace(source, destination)
 
-    monkeypatch.setattr(os, "replace", fail_pointer)
+    monkeypatch.setattr("house_price.registry.atomic.os.replace", fail_pointer)
     with pytest.raises(OSError, match="simulated"):
         PromotionManager(root, tracking).promote(
             copy_package(project_root, tmp_path), mlflow_version="8"
@@ -88,4 +88,3 @@ def test_corrupt_staging_never_changes_champion(project_root, tmp_path) -> None:
         PromotionManager(root, tracking).promote(staging, mlflow_version="2")
     assert tracking.set_calls == []
     assert tracking.current == "1"
-

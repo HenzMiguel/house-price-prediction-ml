@@ -19,6 +19,10 @@ Students está documentada como próximo incremento e não gera custos nesta fea
 Os volumes nomeados são `postgres-data`, `mlflow-artifacts` e `model-registry`. Não execute
 `docker compose down -v` durante a operação normal.
 
+Antes do primeiro `up`, crie os volumes externos estáveis com
+`./scripts/manage_persistent_storage.sh create`. Inspecione-os com `inspect`; a destruição
+coordenada exige backup e o token explícito `destroy --confirm destroy`.
+
 A interface do MLflow fica disponível apenas no host local em <http://127.0.0.1:5000>.
 
 ## Requisitos
@@ -35,6 +39,7 @@ cp .env.example .env
 set -a
 source .env
 set +a
+./scripts/manage_persistent_storage.sh create
 docker compose config --quiet
 docker compose build trainer inference mlflow
 docker compose up -d --wait postgres mlflow
@@ -44,6 +49,15 @@ docker compose run --rm --entrypoint alembic \
   trainer upgrade head
 docker compose up -d inference
 docker compose run --rm trainer
+```
+
+O job one-shot `catalog-reconcile` aplica a migração do catálogo, verifica registry e artifact
+proxy e reconcilia conteúdo antes de liberar o trainer. Consultas e manutenção usam:
+
+```bash
+docker compose run --rm --entrypoint model-catalog trainer list --json
+docker compose run --rm --entrypoint model-catalog trainer verify --probe-artifacts --json
+docker compose run --rm --entrypoint model-catalog trainer reconcile --mode check --json
 ```
 
 Depois do primeiro campeão:
@@ -111,3 +125,4 @@ dias. Configure os secrets:
 - [Operação, backup, restore e rollback](docs/operations.md)
 - [Premissas para Azure for Students](docs/azure-deployment-assumptions.md)
 - [Especificação e contratos](specs/001-train-container-metrics/)
+- [Persistência e catálogo](specs/002-persist-model-mlflow/)

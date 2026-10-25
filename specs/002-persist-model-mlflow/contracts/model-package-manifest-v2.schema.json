@@ -110,7 +110,11 @@
     "doubleField": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "type"]
+      "required": ["name", "type"],
+      "properties": {
+        "name": {"type": "string"},
+        "type": {"const": "double"}
+      }
     }
   }
 }

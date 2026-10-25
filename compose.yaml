@@ -60,6 +60,7 @@ services:
       - "127.0.0.1:${MLFLOW_HOST_PORT:-5000}:5000"
     depends_on:
       postgres: {condition: service_healthy}
+      mlflow-migrate: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"]
       interval: 10s
@@ -72,6 +73,27 @@ services:
       resources:
         limits: {cpus: "0.75", memory: 2560M}
     networks: [backend, host-access]
+
+  mlflow-migrate:
+    build:
+      context: .
+      dockerfile: docker/mlflow.Dockerfile
+    restart: "no"
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    entrypoint: ["/usr/local/bin/migrate-mlflow"]
+    environment:
+      MLFLOW_BACKEND_STORE_URI: ${MLFLOW_BACKEND_STORE_URI:?set MLFLOW_BACKEND_STORE_URI}
+      MLFLOW_MIGRATION_BACKUP_DIR: /backup
+    volumes:
+      - ./weekly-output:/backup
+    depends_on:
+      postgres: {condition: service_healthy}
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 512M}
+    networks: [backend]
 
   trainer:
     build:
@@ -90,13 +112,43 @@ services:
     volumes:
       - model-registry:/model-registry
     depends_on:
+      catalog-reconcile: {condition: service_completed_successfully}
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    deploy:
+      resources:
+        limits: {cpus: "2.0", memory: 3G}
+    networks: [backend]
+
+  catalog-reconcile:
+    build:
+      context: .
+      dockerfile: docker/trainer.Dockerfile
+      args: {IMAGE_REVISION: "${CODE_REVISION:-local-dev}"}
+    restart: "no"
+    entrypoint: ["/usr/local/bin/reconcile-catalog"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?set MIGRATION_DATABASE_URL}
+      OPTUNA_STORAGE_URL: ${OPTUNA_STORAGE_URL:?set OPTUNA_STORAGE_URL}
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+      MODEL_REGISTRY_PATH: /model-registry
+      MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-house-price-training-v2}
+      MLFLOW_RECOVERY_EXPERIMENT_NAME: ${MLFLOW_RECOVERY_EXPERIMENT_NAME:-house-price-model-reconciliation}
+      MLFLOW_REGISTERED_MODEL_NAME: ${MLFLOW_REGISTERED_MODEL_NAME:-house-price-regressor}
+      MLFLOW_CHAMPION_ALIAS: ${MLFLOW_CHAMPION_ALIAS:-champion}
+      CATALOG_ADVISORY_LOCK_ID: ${CATALOG_ADVISORY_LOCK_ID:-79509815116613}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - model-registry:/model-registry
+    depends_on:
       postgres: {condition: service_healthy}
       mlflow: {condition: service_healthy}
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     deploy:
       resources:
-        limits: {cpus: "2.0", memory: 3G}
+        limits: {cpus: "0.5", memory: 1G}
     networks: [backend]
 
   inference:
@@ -115,9 +167,6 @@ services:
       - "127.0.0.1:${INFERENCE_HOST_PORT:-8000}:8000"
     volumes:
       - model-registry:/model-registry:ro
-    depends_on:
-      postgres: {condition: service_healthy}
-      mlflow: {condition: service_healthy}
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     deploy:
@@ -132,6 +181,12 @@ networks:
 
 volumes:
   postgres-data:
+    external: true
+    name: ${POSTGRES_VOLUME_NAME:-house-price-postgres-data}
   mlflow-artifacts:
+    external: true
+    name: ${MLFLOW_ARTIFACTS_VOLUME_NAME:-house-price-mlflow-artifacts}
   model-registry:
+    external: true
+    name: ${MODEL_REGISTRY_VOLUME_NAME:-house-price-model-registry}
 

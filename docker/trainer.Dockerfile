@@ -22,6 +22,8 @@ COPY data /app/data
 COPY --chown=app:app requirements.lock /app/requirements.lock
 COPY --chown=app:app alembic.ini /app/alembic.ini
 COPY --chown=app:app migrations /app/migrations
+COPY --chown=app:app scripts/reconcile_catalog.sh /usr/local/bin/reconcile-catalog
+RUN chmod 0555 /usr/local/bin/reconcile-catalog
 RUN chmod -R a-w /app/data
 USER 10001:10001
 WORKDIR /app

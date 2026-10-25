@@ -960,7 +960,7 @@ requires-dist = [
     { name = "joblib", specifier = ">=1.4,<2" },
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "matplotlib", specifier = ">=3.9,<4" },
-    { name = "mlflow", specifier = ">=3,<4" },
+    { name = "mlflow", specifier = "==3.17.2" },
     { name = "numpy", specifier = ">=2,<3" },
     { name = "optuna", specifier = ">=4,<6" },
     { name = "pandas", specifier = ">=2.2,<4" },

@@ -2,7 +2,6 @@
 
 import json
 import logging
-import shutil
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -10,19 +9,17 @@ from pathlib import Path
 from time import monotonic
 from uuid import uuid4
 
-import joblib
 import mlflow
 from sqlalchemy import create_engine
 
+from house_price.catalog.reconciliation import CatalogReconciler
+from house_price.catalog.repository import CatalogRepository
 from house_price.data.validation import DatasetSnapshot, load_and_validate_snapshot
 from house_price.domain import CandidateFamily, ModelCandidate, ModelMetrics, TrainingStatus
-from house_price.registry.manifest import sha256_file
 from house_price.registry.promotion import (
     ConcurrentPromotionError,
     PromotionError,
-    PromotionManager,
-    prepare_staging,
-    result_identity,
+    PublicationSaga,
 )
 from house_price.settings import Settings
 from house_price.tracking.mlflow_client import TrackingClient
@@ -31,7 +28,7 @@ from house_price.training.dataset import build_estimator, deterministic_split, u
 from house_price.training.evaluation import apply_gate, regression_metrics, select_winner
 from house_price.training.optimization import optimize_family
 from house_price.training.plots import evaluation_plots, optimization_history, parameter_importance
-from house_price.training.publishing import TrainingPublisher
+from house_price.training.publishing import TrainingPublisher, build_model_package
 from house_price.training.search_spaces import DEFAULT_TRIAL_BUDGETS
 from house_price.training.tracking import TrainingTracker
 
@@ -89,99 +86,30 @@ def _run_values(
     }
 
 
-def _build_package(
-    *,
-    root: Path,
-    winner: ModelCandidate,
-    estimator: object,
-    plots: list[Path],
-    snapshot: DatasetSnapshot,
-    settings: Settings,
-    options: PipelineOptions,
-    mlflow_model_version: str,
-) -> tuple[Path, str]:
-    build_root = root / ".package-build"
-    build_root.mkdir(parents=True, exist_ok=True)
-    temporary = Path(tempfile.mkdtemp(prefix="champion-", dir=build_root))
-    model_dir = temporary / "model"
-    model_dir.mkdir()
-    model_file = model_dir / "model.joblib"
-    joblib.dump(estimator, model_file)
-    model_checksum = sha256_file(model_file)
-    model_version = result_identity(
-        code_revision=settings.code_revision,
-        dataset_checksum=snapshot.sha256,
-        split_seed=options.seed,
-        test_fraction=options.test_fraction,
-        family=winner.family.value,
-        parameters=winner.parameters,
-        model_checksum=model_checksum,
-    )[:24]
-    plot_dir = temporary / "plots"
-    plot_dir.mkdir()
-    plot_paths: list[str] = []
-    for plot in plots:
-        destination = plot_dir / plot.name
-        shutil.copy2(plot, destination)
-        plot_paths.append(f"plots/{plot.name}")
-    metrics = winner.metrics.__dict__
-    (temporary / "metrics.json").write_text(
-        json.dumps(metrics, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    lock_path = Path("/app/requirements.lock")
-    if not lock_path.is_file():
-        lock_path = Path("requirements.lock")
-    previous = None
-    pointer = root / "current.json"
-    if pointer.is_file():
-        previous = json.loads(pointer.read_text()).get("model_version")
-    manifest = {
-        "schema_version": "1.0.0",
-        "model_version": model_version,
-        "registered_model_name": "house-price-regressor",
-        "mlflow_model_version": mlflow_model_version,
-        "mlflow_run_id": winner.mlflow_run_id,
-        "training_run_id": winner.training_run_id,
-        "candidate_family": winner.family.value,
-        "dataset": {
-            "name": snapshot.dataset_name,
-            "version": snapshot.dataset_version,
-            "sha256": snapshot.sha256,
-            "row_count": snapshot.row_count,
-            "schema_version": snapshot.schema_version,
-        },
-        "model_checksum": model_checksum,
-        "dependency_lock_checksum": sha256_file(lock_path),
-        "training_environment_version": settings.training_environment_version,
-        "metrics": metrics,
-        "signature": {
-            "inputs": [{"name": name, "type": "double"} for name in snapshot.feature_names],
-            "output": "double",
-        },
-        "artifacts": {
-            "model_path": "model",
-            "metrics_path": "metrics.json",
-            "plots": plot_paths,
-        },
-        "promoted_at": datetime.now(UTC).isoformat(),
-        "previous_model_version": previous,
-    }
-    (temporary / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    return temporary, model_version
-
-
 def run_pipeline(settings: Settings, options: PipelineOptions) -> PipelineResult:
     started_clock = monotonic()
     started_at = datetime.now(UTC)
+    engine = create_engine(settings.database_url, pool_pre_ping=True)
+    catalog_repository = CatalogRepository(
+        engine=engine, advisory_lock_id=settings.catalog_advisory_lock_id
+    )
+    tracking_client = TrackingClient(
+        settings.mlflow_tracking_uri,
+        settings.mlflow_experiment_name,
+        recovery_experiment_name=settings.mlflow_recovery_experiment_name,
+        registered_model_name=settings.mlflow_registered_model_name,
+        champion_alias=settings.mlflow_champion_alias,
+    )
+    CatalogReconciler(
+        settings.model_registry_path,
+        repository=catalog_repository,
+        tracking=tracking_client,
+    ).preflight(probe_artifacts=True)
     frame, snapshot = load_and_validate_snapshot(
         settings.dataset_path, settings.dataset_manifest_path
     )
     split = deterministic_split(frame, seed=options.seed, test_fraction=options.test_fraction)
-    tracking_client = TrackingClient(settings.mlflow_tracking_uri)
     tracker = TrainingTracker(tracking_client)
-    engine = create_engine(settings.database_url, pool_pre_ping=True)
     publisher = TrainingPublisher(ObservabilityRepository(engine=engine))
     champion_metrics = _champion_metrics(settings.model_registry_path)
     candidates: list[ModelCandidate] = []
@@ -311,58 +239,24 @@ def run_pipeline(settings: Settings, options: PipelineOptions) -> PipelineResult
 
                 stage = TrainingStatus.PROMOTING.value
                 publisher.publish_run(**{**run_values, "status": stage})
-                package, proposed_version = _build_package(
+                package = build_model_package(
                     root=settings.model_registry_path,
                     winner=winner,
                     estimator=fitted[winner.family],
                     plots=candidate_plots[winner.family],
                     snapshot=snapshot,
                     settings=settings,
-                    options=options,
-                    mlflow_model_version="pending",
+                    split_seed=options.seed,
+                    test_fraction=options.test_fraction,
                 )
-                manager = PromotionManager(
-                    settings.model_registry_path, tracking_client, lock_engine=engine
-                )
-                with manager.lock():
-                    current_pointer = manager.current_pointer()
-                    if current_pointer and current_pointer.get("model_version") == proposed_version:
-                        shutil.rmtree(package)
-                        publisher.publish_run(
-                            **{
-                                **run_values,
-                                "status": TrainingStatus.SUCCEEDED_NO_PROMOTION.value,
-                                "completed_at": datetime.now(UTC),
-                            }
-                        )
-                        return PipelineResult(
-                            options.run_id,
-                            TrainingStatus.SUCCEEDED_NO_PROMOTION,
-                            tuple(candidates),
-                            False,
-                            proposed_version,
-                            monotonic() - started_clock,
-                        )
-                    try:
-                        mlflow_version = tracking_client.register_without_alias(
-                            winner.artifact_uri, winner.mlflow_run_id
-                        )
-                        manifest_path = package / "manifest.json"
-                        manifest_data = json.loads(manifest_path.read_text())
-                        manifest_data["mlflow_model_version"] = mlflow_version
-                        manifest_path.write_text(
-                            json.dumps(manifest_data, indent=2, sort_keys=True) + "\n",
-                            encoding="utf-8",
-                        )
-                        staging = prepare_staging(
-                            package, settings.model_registry_path, proposed_version
-                        )
-                        shutil.rmtree(package)
-                        model_version, promoted = manager.promote_locked(
-                            staging, mlflow_version=mlflow_version
-                        )
-                    except Exception as exc:
-                        raise PromotionError("candidate promotion failed") from exc
+                try:
+                    model_version, promoted = PublicationSaga(
+                        settings.model_registry_path,
+                        tracking_client,
+                        catalog_repository,
+                    ).publish(package.path, model_uri=winner.artifact_uri)
+                except Exception as exc:
+                    raise PromotionError("candidate publication saga failed") from exc
                 winner.promoted = promoted
                 publisher.publish_candidate(winner)
                 status = (

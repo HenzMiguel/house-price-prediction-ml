@@ -7,9 +7,14 @@ RUN python -m venv /opt/venv \
 
 FROM python:3.12-slim
 ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1
-RUN groupadd --gid 10002 mlflow && useradd --uid 10002 --gid mlflow --create-home mlflow \
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes postgresql-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10002 mlflow && useradd --uid 10002 --gid mlflow --create-home mlflow \
     && mkdir -p /mlflow-artifacts && chown mlflow:mlflow /mlflow-artifacts
 COPY --from=builder /opt/venv /opt/venv
+COPY scripts/migrate_mlflow.sh /usr/local/bin/migrate-mlflow
+RUN chmod 0555 /usr/local/bin/migrate-mlflow
 USER 10002:10002
 EXPOSE 5000
 VOLUME ["/mlflow-artifacts"]

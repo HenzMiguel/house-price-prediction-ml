@@ -38,6 +38,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: uv sync --frozen --extra dev
+      - run: echo "HOST_UID=$(id -u)" >> "$GITHUB_ENV" && echo "HOST_GID=$(id -g)" >> "$GITHUB_ENV"
       - name: Derive idempotent training run UUID
         run: echo "RUN_UUID=$(python -c \"import uuid; print(uuid.uuid5(uuid.NAMESPACE_URL, 'github:${{ github.repository }}:${{ github.run_id }}'))\")" >> "$GITHUB_ENV"
 
@@ -61,16 +62,17 @@ jobs:
 
       - name: Build immutable images and create volumes
         run: |
+          ./scripts/manage_persistent_storage.sh create
           docker compose build trainer inference mlflow
           docker compose up --no-start postgres mlflow
 
       - name: Restore previous champion volume
         run: |
           if test -f restored/model-registry.tar.gz; then
-            docker run --rm -v house-price-mlops_model-registry:/target -v "$PWD/restored:/backup:ro" alpine:3.22 sh -c 'tar xzf /backup/model-registry.tar.gz -C /target'
+            docker run --rm -v house-price-model-registry:/target -v "$PWD/restored:/backup:ro" alpine:3.22 sh -c 'tar xzf /backup/model-registry.tar.gz -C /target'
           fi
           if test -f restored/mlflow-artifacts.tar.gz; then
-            docker run --rm -v house-price-mlops_mlflow-artifacts:/target -v "$PWD/restored:/backup:ro" alpine:3.22 sh -c 'tar xzf /backup/mlflow-artifacts.tar.gz -C /target'
+            docker run --rm -v house-price-mlflow-artifacts:/target -v "$PWD/restored:/backup:ro" alpine:3.22 sh -c 'tar xzf /backup/mlflow-artifacts.tar.gz -C /target'
           fi
 
       - name: Start persistence
@@ -84,14 +86,22 @@ jobs:
               docker compose exec -T postgres pg_restore --clean --if-exists --no-owner --username "$POSTGRES_USER" --dbname "$database" < "$dump"
             fi
           done
-          docker compose run --rm --no-deps --entrypoint alembic -e MIGRATION_DATABASE_URL="$MIGRATION_DATABASE_URL" trainer upgrade head
+          for database in house_price mlflow optuna; do
+            docker compose exec -T postgres pg_dump --format=custom --username "$POSTGRES_USER" "$database" > "weekly-output/pre-migration-${database}.dump"
+          done
+          docker compose run --rm mlflow-migrate
 
       - name: Start tracking after restore
         run: docker compose up -d mlflow
 
+      - name: Migrate, reconcile, and verify restored catalog
+        run: |
+          docker compose run --rm catalog-reconcile 2>&1 | tee weekly-output/reconciliation.jsonl
+          docker compose run --rm --no-deps --entrypoint model-catalog trainer verify --probe-artifacts --json 2>&1 | tee weekly-output/catalog-verification.jsonl
+
       - name: Record previous champion
         run: |
-          docker run --rm -v house-price-mlops_model-registry:/registry alpine:3.22 sh -c 'test ! -f /registry/current.json || cp /registry/current.json /tmp/current.json; test ! -f /tmp/current.json || cat /tmp/current.json' > weekly-output/previous-pointer.json
+          docker run --rm -v house-price-model-registry:/registry alpine:3.22 sh -c 'test ! -f /registry/current.json || cp /registry/current.json /tmp/current.json; test ! -f /tmp/current.json || cat /tmp/current.json' > weekly-output/previous-pointer.json
 
       - name: Train offline
         id: training
@@ -107,13 +117,14 @@ jobs:
           for database in house_price mlflow optuna; do
             docker compose exec -T postgres pg_dump --format=custom --username "$POSTGRES_USER" "$database" > "weekly-output/${database}.dump" || true
           done
-          docker run --rm -v house-price-mlops_model-registry:/source:ro -v "$PWD/weekly-output:/backup" alpine:3.22 sh -c 'tar czf /backup/model-registry.tar.gz -C /source .' || true
-          docker run --rm -v house-price-mlops_mlflow-artifacts:/source:ro -v "$PWD/weekly-output:/backup" alpine:3.22 sh -c 'tar czf /backup/mlflow-artifacts.tar.gz -C /source .' || true
+          docker run --rm -v house-price-model-registry:/source:ro -v "$PWD/weekly-output:/backup" alpine:3.22 sh -c 'tar czf /backup/model-registry.tar.gz -C /source .' || true
+          docker run --rm -v house-price-mlflow-artifacts:/source:ro -v "$PWD/weekly-output:/backup" alpine:3.22 sh -c 'tar czf /backup/mlflow-artifacts.tar.gz -C /source .' || true
+          sha256sum weekly-output/* > weekly-output/SHA256SUMS || true
 
       - name: Build weekly evidence
         if: always()
         run: |
-          effective="$(docker run --rm -v house-price-mlops_model-registry:/registry:ro alpine:3.22 sh -c "sed -n 's/.*\"model_version\": *\"\([^\"]*\)\".*/\1/p' /registry/current.json 2>/dev/null" || true)"
+          effective="$(docker run --rm -v house-price-model-registry:/registry:ro alpine:3.22 sh -c "sed -n 's/.*\"model_version\": *\"\([^\"]*\)\".*/\1/p' /registry/current.json 2>/dev/null" || true)"
           previous="$(sed -n 's/.*"model_version": *"\([^"]*\)".*/\1/p' weekly-output/previous-pointer.json || true)"
           uv run python scripts/create_weekly_evidence.py \
             --workflow-run-id "${{ github.run_id }}" \
@@ -128,7 +139,10 @@ jobs:
             --artifact weekly-output/mlflow.dump \
             --artifact weekly-output/optuna.dump \
             --artifact weekly-output/model-registry.tar.gz \
-            --artifact weekly-output/mlflow-artifacts.tar.gz
+            --artifact weekly-output/mlflow-artifacts.tar.gz \
+            --artifact weekly-output/reconciliation.jsonl \
+            --artifact weekly-output/catalog-verification.jsonl \
+            --artifact weekly-output/SHA256SUMS
 
       - name: Upload immutable weekly state and evidence
         if: always()
